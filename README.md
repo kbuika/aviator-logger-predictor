@@ -90,8 +90,8 @@ The Aviator game operates on the following principles:
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/aviator-predictor.git
-cd aviator-predictor
+git clone https://github.com/kbuika/aviator-logger.git
+cd aviator-logger
 ```
 
 2. Install dependencies:
