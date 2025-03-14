@@ -476,7 +476,7 @@ class AviatorPredictor:
 
     def place_bets_for_next_game(self, last_crash_point):
         """
-        Enhanced bet placement with confidence-based sizing and game skipping
+        Enhanced bet placement with confidence-based sizing, playing all games above 50% confidence
         """
         if not self.waiting_for_next_game:
             return []
@@ -530,14 +530,14 @@ class AviatorPredictor:
             elif good_skip_rate > 0.8:  # If we're making very good skips
                 confidence *= 0.9  # Be more conservative to maintain good skip rate
 
-        # Skip games with low confidence
-        MIN_CONFIDENCE_THRESHOLD = 0.6
+        # New minimum confidence threshold of 50%
+        MIN_CONFIDENCE_THRESHOLD = 0.5
         if confidence < MIN_CONFIDENCE_THRESHOLD:
             # Calculate potential profit for skip analysis
             potential_bet = self.calculate_bet_size(confidence)
             potential_profit = potential_bet * (self.current_conservative_target - 1)
             
-            logging.info(f"Skipping game due to low confidence: {confidence:.2f}")
+            logging.info(f"Skipping game due to very low confidence: {confidence:.2f}")
             # Store skip decision for later analysis when we get the crash point
             self.last_skip_info = {
                 'confidence': confidence,
@@ -550,10 +550,20 @@ class AviatorPredictor:
         
         # Dynamic bet sizing based on confidence
         if available_balance > 0:
-            # Scale bet size with confidence
+            # More gradual bet size scaling based on confidence
+            # Scale from 50% to 100% confidence
             confidence_scale = (confidence - MIN_CONFIDENCE_THRESHOLD) / (1 - MIN_CONFIDENCE_THRESHOLD)
+            
+            # Progressive bet sizing based on confidence levels
+            if confidence >= 0.8:  # High confidence (80-100%)
+                size_multiplier = 1 + (confidence_scale * 0.5)  # Up to 50% larger
+            elif confidence >= 0.65:  # Medium confidence (65-80%)
+                size_multiplier = 1 + (confidence_scale * 0.3)  # Up to 30% larger
+            else:  # Lower confidence (50-65%)
+                size_multiplier = 0.5 + (confidence_scale * 0.5)  # 50-100% of base size
+            
             base_bet_size = self.calculate_bet_size(confidence)
-            scaled_bet_size = base_bet_size * (1 + confidence_scale)
+            scaled_bet_size = base_bet_size * size_multiplier
             
             if scaled_bet_size <= available_balance:
                 # Dynamic target based on recent performance
@@ -568,8 +578,11 @@ class AviatorPredictor:
                     'confidence': confidence
                 })
                 
-                logging.info(f"Placing bet: ${scaled_bet_size:.2f} @ {target:.2f}x")
+                # Enhanced logging with confidence level indicator
+                confidence_level = "HIGH" if confidence >= 0.8 else "MEDIUM" if confidence >= 0.65 else "LOW"
+                logging.info(f"Placing {confidence_level} confidence bet: ${scaled_bet_size:.2f} @ {target:.2f}x")
                 logging.info(f"Confidence: {confidence:.2f}, Win streak: {self.win_streak}")
+                logging.info(f"Bet size multiplier: {size_multiplier:.2f}x base size")
         
         if bets:
             self.active_bets = bets
