@@ -44,6 +44,11 @@ class AviatorPredictor:
         self.crash_std = None
         self.crash_median = None
         
+        # Add tracking for skipped games
+        self.skipped_games = []
+        self.skipped_opportunities = 0
+        self.good_skips = 0
+        
         # Load historical data and train model
         self.initialize_model()
 
@@ -110,7 +115,7 @@ class AviatorPredictor:
 
     def prepare_features(self, df):
         """
-        Prepare features for the model from game history
+        Prepare enhanced features for the model from game history
         """
         # Convert multiplier sequences to lists
         df['multiplier_list'] = df['multiplier_sequence'].apply(lambda x: [float(i) for i in x.split(',')])
@@ -122,21 +127,37 @@ class AviatorPredictor:
         for idx, row in df.iterrows():
             multipliers = row['multiplier_list']
             
-            # Skip sequences that are too short
             if len(multipliers) < 5:
                 continue
             
-            # Create features from different points in the sequence
+            # Enhanced feature creation
             for i in range(5, len(multipliers)):
+                # Basic statistical features
+                last_5 = multipliers[i-5:i]
+                last_3 = multipliers[i-3:i]
+                
                 feature_set = {
-                    'last_5_avg': np.mean(multipliers[i-5:i]),
-                    'last_5_std': np.std(multipliers[i-5:i]),
-                    'last_5_min': np.min(multipliers[i-5:i]),
-                    'last_5_max': np.max(multipliers[i-5:i]),
+                    'last_5_avg': np.mean(last_5),
+                    'last_5_std': np.std(last_5),
+                    'last_5_min': np.min(last_5),
+                    'last_5_max': np.max(last_5),
+                    'last_3_avg': np.mean(last_3),
+                    'last_3_std': np.std(last_3),
                     'current_value': multipliers[i-1],
-                    'growth_rate': multipliers[i-1] / multipliers[i-2] if i > 1 else 1,
+                    'prev_value': multipliers[i-2],
+                    
+                    # Growth metrics
+                    'growth_rate': multipliers[i-1] / multipliers[i-2],
+                    'acceleration': (multipliers[i-1] - multipliers[i-2]) - 
+                                 (multipliers[i-2] - multipliers[i-3]) if i > 2 else 0,
+                    
+                    # Time-based features
                     'time_of_day': pd.to_datetime(row['start_time']).hour,
-                    'duration_so_far': i * 0.1,  # Assuming 0.1s between multipliers
+                    'duration_so_far': i * 0.1,
+                    
+                    # Volatility metrics
+                    'volatility': np.std(np.diff(last_5)),
+                    'trend': np.polyfit(range(5), last_5, 1)[0],
                 }
                 features.append(feature_set)
                 labels.append(row['final_multiplier'])
@@ -227,27 +248,38 @@ class AviatorPredictor:
 
     def calculate_bet_size(self, confidence, max_risk=0.05):
         """
-        Calculate bet size with more aggressive scaling
+        Enhanced bet size calculation with dynamic risk management
         """
-        # Scale risk based on win streak
-        adjusted_risk = min(self.conservative_risk * (1 + self.win_streak * 0.1), self.max_risk)
+        # Base risk adjustment based on balance trend
+        if len(self.trades) >= 10:
+            recent_balance_trend = np.mean([t['profit'] for t in self.trades[-10:]])
+            if recent_balance_trend > 0:
+                adjusted_risk = min(self.conservative_risk * 1.2, self.max_risk)
+            else:
+                adjusted_risk = self.conservative_risk * 0.8
+        else:
+            adjusted_risk = self.conservative_risk
         
-        # Increase risk if we're significantly up
-        if self.balance > self.initial_balance * 1.2:
-            adjusted_risk *= 1.2
+        # Win streak adjustments
+        streak_factor = min(1 + (self.win_streak * 0.1), 1.5)
+        adjusted_risk *= streak_factor
         
-        # Calculate base bet size
+        # Balance protection
+        if self.balance < self.initial_balance * 0.8:
+            adjusted_risk *= 0.7  # Reduce risk when down
+        elif self.balance > self.initial_balance * 1.5:
+            adjusted_risk *= 1.1  # Increase risk when up significantly
+        
+        # Kelly Criterion implementation
+        win_probability = confidence
+        win_multiplier = self.current_conservative_target - 1
+        loss_multiplier = 1
+        kelly_fraction = (win_probability * win_multiplier - (1 - win_probability)) / win_multiplier
+        kelly_bet = self.balance * max(0, kelly_fraction * 0.5)  # Half Kelly for safety
+        
+        # Final bet size calculation
         max_bet = self.balance * adjusted_risk
-        kelly_bet = self.balance * confidence * adjusted_risk
         base_bet = min(kelly_bet, max_bet)
-        
-        # Scale bet size based on recent performance
-        if len(self.trades) >= 5:
-            recent_performance = np.mean([t['success'] for t in self.trades[-5:]])
-            if recent_performance > 0.6:
-                base_bet *= 1.3  # More aggressive scaling on wins
-            elif recent_performance < 0.4:
-                base_bet *= 0.7
         
         # Never bet more than max_risk of initial balance
         return min(base_bet, self.initial_balance * self.max_risk)
@@ -346,88 +378,105 @@ class AviatorPredictor:
 
     def analyze_strategy_performance(self):
         """
-        Analyze historical betting performance to optimize strategy
+        Enhanced strategy analysis with pattern recognition
         """
         try:
             df = pd.read_csv('games_played.csv')
-            if len(df) < 10:  # Need minimum games for analysis
+            if len(df) < 10:
                 return
                 
-            # Analyze conservative strategy
-            conservative_bets = df[df['bet1_type'] == 'conservative']
-            conservative_stats = {
-                'win_rate': conservative_bets['bet1_result'].value_counts().get('win', 0) / len(conservative_bets),
-                'avg_profit': conservative_bets['bet1_profit'].mean(),
-                'best_targets': conservative_bets[conservative_bets['bet1_result'] == 'win']['bet1_target'].mean()
-            }
+            # Time-based analysis
+            df['hour'] = pd.to_datetime(df['timestamp']).dt.hour
+            hourly_stats = df.groupby('hour').agg({
+                'crash_point': ['mean', 'std', 'count'],
+                'bet1_result': lambda x: (x == 'win').mean()
+            }).round(3)
             
-            # Analyze aggressive strategy
-            aggressive_bets = df[df['bet2_type'] == 'aggressive']
-            aggressive_stats = {
-                'win_rate': aggressive_bets['bet2_result'].value_counts().get('win', 0) / len(aggressive_bets),
-                'avg_profit': aggressive_bets['bet2_profit'].mean(),
-                'best_targets': aggressive_bets[aggressive_bets['bet2_result'] == 'win']['bet2_target'].mean()
-            }
+            # Pattern analysis
+            recent_games = df.tail(50)
+            crash_patterns = []
+            for i in range(len(recent_games) - 3):
+                pattern = recent_games.iloc[i:i+3]['crash_point'].tolist()
+                crash_patterns.append(pattern)
             
-            # Analyze crash points distribution
-            recent_crashes = df['crash_point'].tail(50)  # Last 50 games
-            crash_stats = {
-                'mean': recent_crashes.mean(),
-                'std': recent_crashes.std(),
-                'median': recent_crashes.median(),
-                'q25': recent_crashes.quantile(0.25),
-                'q75': recent_crashes.quantile(0.75)
-            }
+            # Volatility analysis
+            volatility = df['crash_point'].rolling(10).std().mean()
             
-            # Update strategy parameters based on analysis
-            self.update_strategy_parameters(conservative_stats, aggressive_stats, crash_stats)
+            # Update strategy based on analysis
+            best_hour = hourly_stats.loc[hourly_stats[('bet1_result', '<lambda_0>')].idxmax()]
+            best_target = df[df['bet1_result'] == 'win']['bet1_target'].mean()
             
-            logging.info(f"Strategy Analysis - Conservative WR: {conservative_stats['win_rate']:.2%}, "
-                        f"Aggressive WR: {aggressive_stats['win_rate']:.2%}")
+            # Adjust parameters based on findings
+            if volatility > 1.0:
+                self.target_increment = 0.15  # More conservative in volatile periods
+            else:
+                self.target_increment = 0.25  # More aggressive in stable periods
+                
+            self.base_conservative_target = min(max(1.3, best_target * 0.9), 2.0)
+            
+            logging.info(f"Strategy Analysis - Volatility: {volatility:.2f}, "
+                        f"Best Target: {best_target:.2f}x")
             
         except Exception as e:
-            logging.error(f"Error analyzing strategy: {str(e)}")
-    
-    def update_strategy_parameters(self, conservative_stats, aggressive_stats, crash_stats):
+            logging.error(f"Error in strategy analysis: {str(e)}")
+
+    def analyze_skip_decision(self, crash_point, confidence, potential_profit):
         """
-        Update betting parameters based on historical performance
+        Analyze whether skipping a game was the right decision
         """
-        # Adjust conservative strategy
-        if conservative_stats['win_rate'] < 0.5:
-            # If winning rate is low, be more conservative
-            self.current_conservative_target = self.base_conservative_target * 0.9  # Reduce target multiplier
-            self.conservative_risk = 0.02  # Reduce risk
-        elif conservative_stats['win_rate'] > 0.7:
-            # If winning rate is high, be slightly more aggressive
-            self.current_conservative_target = self.base_conservative_target * 1.1
-            self.conservative_risk = 0.03
-        else:
-            # Balanced approach
-            self.current_conservative_target = self.base_conservative_target
-            self.conservative_risk = 0.025
-            
-        # Adjust aggressive strategy
-        if aggressive_stats['win_rate'] < 0.3:
-            # If aggressive strategy is failing, be more conservative
-            self.current_conservative_target = self.base_conservative_target * 0.8
-            self.conservative_risk = 0.015
-        elif aggressive_stats['win_rate'] > 0.5:
-            # If aggressive strategy is working well
-            self.current_conservative_target = self.base_conservative_target * 1.2
-            self.conservative_risk = 0.025
-        else:
-            # Balanced approach
-            self.current_conservative_target = self.base_conservative_target
-            self.conservative_risk = 0.02
-            
-        # Update crash point prediction factors
-        self.crash_mean = crash_stats['mean']
-        self.crash_std = crash_stats['std']
-        self.crash_median = crash_stats['median']
+        # Calculate what would have happened if we played
+        would_have_won = crash_point > self.current_conservative_target
+        potential_bet = self.calculate_bet_size(confidence)
         
+        if would_have_won:
+            missed_profit = potential_bet * (self.current_conservative_target - 1)
+            skip_quality = "BAD"  # We missed a winning opportunity
+            self.skipped_opportunities += 1
+            
+            # Re-evaluate confidence threshold if we're missing too many opportunities
+            if self.skipped_opportunities >= 3:
+                current_threshold = 0.6  # Current MIN_CONFIDENCE_THRESHOLD
+                # Adjust threshold based on recent skip accuracy
+                if self.skipped_opportunities > 0:
+                    skip_accuracy = self.good_skips / (self.good_skips + self.skipped_opportunities)
+                    if skip_accuracy < 0.5:  # If we're making more bad skips than good ones
+                        new_threshold = max(0.5, current_threshold - 0.05)  # Reduce threshold slightly
+                        logging.info(f"Adjusting confidence threshold from {current_threshold:.2f} to {new_threshold:.2f} due to missed opportunities")
+                
+                self.skipped_opportunities = 0  # Reset counter
+                self.good_skips = 0
+        else:
+            missed_profit = -potential_bet  # What we would have lost
+            skip_quality = "GOOD"  # We avoided a loss
+            self.good_skips += 1
+            
+        # Log the skip analysis
+        skip_record = {
+            'timestamp': datetime.now(),
+            'crash_point': crash_point,
+            'confidence': confidence,
+            'potential_profit': potential_profit,
+            'would_have_won': would_have_won,
+            'missed_profit': missed_profit,
+            'skip_quality': skip_quality
+        }
+        self.skipped_games.append(skip_record)
+        
+        logging.info(f"Skip Analysis - {skip_quality} SKIP!")
+        logging.info(f"Crash Point: {crash_point:.2f}x")
+        logging.info(f"Confidence: {confidence:.2f}")
+        logging.info(f"Missed Profit: {missed_profit:+.2f}")
+        
+        # Log skip statistics
+        if len(self.skipped_games) > 0:
+            good_skips = sum(1 for game in self.skipped_games if game['skip_quality'] == 'GOOD')
+            total_skips = len(self.skipped_games)
+            skip_accuracy = good_skips / total_skips
+            logging.info(f"Skip Accuracy: {skip_accuracy:.1%} ({good_skips}/{total_skips} good skips)")
+
     def place_bets_for_next_game(self, last_crash_point):
         """
-        Place bets with dynamic target adjustment and aggressive scaling
+        Enhanced bet placement with confidence-based sizing and game skipping
         """
         if not self.waiting_for_next_game:
             return []
@@ -436,53 +485,114 @@ class AviatorPredictor:
         if len(self.last_crash_points) > 20:
             self.last_crash_points.pop(0)
         
-        # More frequent strategy analysis
-        if len(self.trades) % 5 == 0 and len(self.trades) > 0:  # Analyze every 5 games
-            logging.info("Re-evaluating strategy...")
+        # More sophisticated analysis
+        if len(self.trades) % 5 == 0 and len(self.trades) > 0:
             self.analyze_strategy_performance()
             self.plot_performance()
         
         if len(self.last_crash_points) < 5:
             return []
         
-        # Calculate confidence with aggressive bias
-        confidence = 0.6  # Start with higher base confidence
-        if len(self.trades) > 0:
-            recent_accuracy = np.mean([t['success'] for t in self.trades[-10:]])
-            confidence = (confidence + recent_accuracy) / 2
+        # Enhanced pattern-based confidence calculation
+        recent_volatility = np.std(self.last_crash_points[-5:])
+        trend = np.polyfit(range(len(self.last_crash_points[-5:])), 
+                          self.last_crash_points[-5:], 1)[0]
+        
+        base_confidence = 0.6
+        confidence = base_confidence
+        
+        # Adjust confidence based on patterns
+        if recent_volatility < 0.5:  # Low volatility period
+            confidence *= 1.2
+        elif recent_volatility > 1.0:  # High volatility period
+            confidence *= 0.8
             
-            # Boost confidence on win streaks
-            if self.win_streak > 2:
-                confidence *= 1.1
+        if trend > 0:  # Upward trend
+            confidence *= 1.1
+        elif trend < 0:  # Downward trend
+            confidence *= 0.9
+            
+        # Win streak adjustment
+        if self.win_streak > 2:
+            confidence *= 1.1
+            
+        # Recent performance adjustment
+        if len(self.trades) >= 5:
+            recent_success_rate = np.mean([t['success'] for t in self.trades[-5:]])
+            confidence *= (1 + recent_success_rate) / 2
+            
+        # Skip accuracy adjustment
+        if len(self.skipped_games) >= 5:
+            recent_skips = self.skipped_games[-5:]
+            good_skip_rate = sum(1 for game in recent_skips if game['skip_quality'] == 'GOOD') / len(recent_skips)
+            if good_skip_rate < 0.5:  # If we're making more bad skips than good ones
+                confidence *= 1.1  # Be more confident to reduce bad skips
+            elif good_skip_rate > 0.8:  # If we're making very good skips
+                confidence *= 0.9  # Be more conservative to maintain good skip rate
+
+        # Skip games with low confidence
+        MIN_CONFIDENCE_THRESHOLD = 0.6
+        if confidence < MIN_CONFIDENCE_THRESHOLD:
+            # Calculate potential profit for skip analysis
+            potential_bet = self.calculate_bet_size(confidence)
+            potential_profit = potential_bet * (self.current_conservative_target - 1)
+            
+            logging.info(f"Skipping game due to low confidence: {confidence:.2f}")
+            # Store skip decision for later analysis when we get the crash point
+            self.last_skip_info = {
+                'confidence': confidence,
+                'potential_profit': potential_profit
+            }
+            return []
         
         bets = []
         available_balance = self.balance
         
-        # Place bet with dynamic target
+        # Dynamic bet sizing based on confidence
         if available_balance > 0:
-            bet_size = self.calculate_bet_size(confidence)
-            if bet_size <= available_balance:
-                # Cap the target multiplier
-                target = min(self.current_conservative_target, self.max_target)
+            # Scale bet size with confidence
+            confidence_scale = (confidence - MIN_CONFIDENCE_THRESHOLD) / (1 - MIN_CONFIDENCE_THRESHOLD)
+            base_bet_size = self.calculate_bet_size(confidence)
+            scaled_bet_size = base_bet_size * (1 + confidence_scale)
+            
+            if scaled_bet_size <= available_balance:
+                # Dynamic target based on recent performance
+                target = min(
+                    self.current_conservative_target * (1 + self.win_streak * 0.05),
+                    self.max_target
+                )
                 bets.append({
-                    'amount': bet_size,
+                    'amount': scaled_bet_size,
                     'target_multiplier': target,
-                    'type': 'conservative'
+                    'type': 'conservative',
+                    'confidence': confidence
                 })
+                
+                logging.info(f"Placing bet: ${scaled_bet_size:.2f} @ {target:.2f}x")
+                logging.info(f"Confidence: {confidence:.2f}, Win streak: {self.win_streak}")
         
         if bets:
             self.active_bets = bets
             self.waiting_for_next_game = False
             total_risk = sum(bet['amount'] for bet in bets)
-            logging.info(f"Placed bet with target {self.current_conservative_target:.2f}x "
-                        f"(Win streak: {self.win_streak}, Risk: {(total_risk/self.balance)*100:.1f}%)")
+            risk_percentage = (total_risk/self.balance)*100
+            logging.info(f"Total risk: ${total_risk:.2f} ({risk_percentage:.1f}% of balance)")
         
         return bets
 
     def process_game_result(self, crash_point):
         """
-        Process the game result and update dynamic target multiplier
+        Process the game result and analyze skip decisions
         """
+        # First, analyze skip decision if we skipped this game
+        if hasattr(self, 'last_skip_info'):
+            self.analyze_skip_decision(
+                crash_point,
+                self.last_skip_info['confidence'],
+                self.last_skip_info['potential_profit']
+            )
+            delattr(self, 'last_skip_info')
+        
         if not self.active_bets:
             return
             
@@ -494,22 +604,33 @@ class AviatorPredictor:
             profit = bet['amount'] * (bet['target_multiplier'] - 1) if success else -bet['amount']
             total_profit += profit
             
+            # Detailed result logging
+            result_str = "WIN" if success else "LOSS"
+            profit_str = f"+${profit:.2f}" if profit > 0 else f"-${abs(profit):.2f}"
+            logging.info(f"Game Result: {result_str}")
+            logging.info(f"Bet Amount: ${bet['amount']:.2f}")
+            logging.info(f"Target: {bet['target_multiplier']:.2f}x")
+            logging.info(f"Crash Point: {crash_point:.2f}x")
+            logging.info(f"Profit: {profit_str}")
+            logging.info(f"Confidence Level: {bet['confidence']:.2f}")
+            
             # Update dynamic target multiplier based on result
             if success:
                 self.win_streak += 1
                 self.current_conservative_target += self.target_increment
-                logging.info(f"Win! Increasing target to {self.current_conservative_target:.2f}x")
+                logging.info(f"Win streak: {self.win_streak}, New target: {self.current_conservative_target:.2f}x")
             else:
                 self.win_streak = 0
                 self.current_conservative_target = self.base_conservative_target
-                logging.info(f"Loss! Resetting target to {self.base_conservative_target:.2f}x")
+                logging.info(f"Win streak reset, Base target: {self.base_conservative_target:.2f}x")
             
             bet_results.append({
                 'amount': bet['amount'],
                 'target': bet['target_multiplier'],
                 'type': bet['type'],
                 'result': 'win' if success else 'loss',
-                'profit': profit
+                'profit': profit,
+                'confidence': bet['confidence']
             })
             
             # Record trade for performance tracking
@@ -523,13 +644,16 @@ class AviatorPredictor:
                 'balance': self.balance + profit,
                 'session_number': self.session_number,
                 'bet_type': bet['type'],
-                'win_streak': self.win_streak
+                'win_streak': self.win_streak,
+                'confidence': bet['confidence']
             }
             self.trades.append(trade)
             self.balance += profit
             
-            logging.info(f"Game ended: Crash@{crash_point:.2f}x, Target@{bet['target_multiplier']:.2f}x, "
-                        f"Profit: ${profit:.2f}, Balance: ${self.balance:.2f}")
+            # Session performance summary
+            session_profit = sum(t['profit'] for t in self.trades if t['session_number'] == self.session_number)
+            roi = (session_profit / self.initial_balance) * 100
+            logging.info(f"Balance: ${self.balance:.2f} (Session ROI: {roi:.1f}%)")
         
         # Record game in games_played.csv
         game_record = {
