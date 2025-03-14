@@ -1,4 +1,6 @@
 # Aviator Game Predictor
+NOTE: I "vibe-coded" through this project;
+Tldr: Aviator is extremely random and is a zero-sum game except for the fact that you are the one who will keep losing! Please don't even try it.
 
 ## Overview
 This project implements a machine learning-based prediction system for the Aviator game, a multiplier-based betting game where players need to cash out before the "plane" flies away. The project consists of two main components:
@@ -14,7 +16,12 @@ The Aviator game operates on the following principles:
 5. Maximum of two active bets per round
 6. If you don't cash out before the crash, you lose your bet
 
-## Project Components
+### Core Functionality
+- Real-time game monitoring and crash point prediction
+- Dynamic bet sizing based on confidence levels
+- Adaptive strategy adjustment based on performance
+- Comprehensive logging and performance tracking
+- Automated risk management
 
 ### Data Collection (`main.py`)
 - Uses computer vision (OpenCV) to monitor game state
@@ -23,68 +30,33 @@ The Aviator game operates on the following principles:
 - Records game data to CSV for analysis
 - Implements robust error handling and logging
 
-### Prediction System (`predictor.py`)
-- Uses XGBoost for crash point prediction
-- Implements dynamic betting strategies
-- Features adaptive risk management
-- Tracks performance and maintains session history
-- Includes self-learning capabilities
+### Risk Management
+- Kelly Criterion implementation
+- Dynamic risk adjustment
+- Balance protection mechanisms
+- Progressive bet sizing
+- Win streak factoring
 
-## Implemented Strategies
+### Performance Tracking
+- Detailed game logging in CSV format
+- Real-time performance metrics
+- Skip analysis and evaluation
+- ROI tracking
+- Win rate analysis
 
-1. **Conservative Base Strategy**
-   - Lower base target multiplier (1.3x-1.5x)
-   - Small bet sizes (2.5-3.5% of balance)
-   - Reset on losses
+## Requirements
 
-2. **Progressive Target Strategy**
-   - Increases target multiplier after wins
-   - Resets to base target after losses
-   - Maintains win streak tracking
-
-3. **Adaptive Risk Management**
-   - Adjusts bet sizes based on performance
-   - Scales risk with win streaks
-   - Implements maximum risk caps
-
-4. **ML-Based Prediction**
-   - Uses recent game history
-   - Considers time-series features
-   - Adapts to changing patterns
-
-## Challenges and Limitations
-
-1. **Game Unpredictability**
-   - Crash points are server-determined
-   - No guaranteed patterns
-   - High variance in outcomes
-
-2. **Technical Challenges**
-   - OCR reliability
-   - Network latency issues
-   - Timing of bet placement
-
-3. **Strategy Limitations**
-   - Risk of consecutive losses
-   - Balance between risk and reward
-   - Psychological factors
-
-## Potential Future Strategies
-
-1. **Pattern-Based Approaches**
-   - Time-of-day analysis
-   - Session pattern recognition
-   - Streak analysis
-
-2. **Multi-Model Ensemble**
-   - Combine multiple prediction models
-   - Weight predictions by confidence
-   - Adaptive model selection
-
-3. **Advanced Risk Management**
-   - Kelly Criterion variations
-   - Dynamic portfolio management
-   - Recovery strategies
+```
+pandas
+numpy
+xgboost
+scikit-learn
+matplotlib
+seaborn
+opencv-python
+pytesseract
+mss
+```
 
 ## Installation
 
@@ -114,34 +86,79 @@ pip install -r requirements.txt
 ```bash
 python main.py
 ```
+This will start monitoring games and collecting crash data.
 
-2. In a separate terminal, start the predictor:
+2. Run the predictor:
 ```bash
 python predictor.py
 ```
+This will start the automated betting system.
 
-## Results and Observations
+## Configuration
 
-1. **Win Rate Patterns**
-   - Higher success with conservative targets (1.3x-1.5x)
-   - Progressive strategies show promise but higher risk
-   - Win streaks often followed by sudden crashes
+### Betting Parameters
+- Initial Balance: $1000 (configurable)
+- Base Target: 1.5x (adaptive)
+- Maximum Target: 3.0x
+- Base Risk: 3.5% per trade
+- Maximum Risk: 5% per trade
 
-2. **Risk Management Effectiveness**
-   - Small bet sizes (2-3%) show better longevity
-   - Progressive betting requires strict discipline
-   - Recovery strategies often lead to larger losses
+### Confidence Levels
+- High (80-100%): Up to 50% larger bets
+- Medium (65-80%): Up to 30% larger bets
+- Low (50-65%): 50-100% of base bet size
+- Below 50%: Skip game
 
-3. **Prediction Accuracy**
-   - Short-term patterns exist but unreliable
-   - ML models show slight edge over random
-   - Time-series features most influential
+### Strategy Adaptation
+- Analyzes every 5 games
+- Adjusts targets based on win rate
+- Modifies risk based on balance trend
+- Updates confidence calculation based on performance
+
+## Files
+
+- `main.py`: Game monitoring and data collection
+- `predictor.py`: Betting strategy and prediction logic
+- `game_data.csv`: Raw game data
+- `games_played.csv`: Betting history and results
+- `trading_performance.png`: Performance visualization
+
+## Performance Metrics
+
+The system tracks:
+- Win/Loss ratio
+- ROI per session
+- Total profit/loss
+- Skip accuracy
+- Confidence correlation
+- Risk exposure
+
+## Safety Features
+
+1. Balance Protection
+   - Reduces risk when balance drops below 80% of initial
+   - Increases risk when performing well
+   - Maximum bet size limits
+
+2. Risk Management
+   - Kelly Criterion for optimal bet sizing
+   - Dynamic risk adjustment
+   - Win streak consideration
+   - Volatility-based risk scaling
+
+3. Loss Prevention
+   - Skip low-confidence games
+   - Progressive target adjustment
+   - Automatic session reset on depletion
 
 ## Contributing
+
 Feel free to submit issues, fork the repository, and create pull requests for any improvements.
 
-## Disclaimer
-This project is for educational purposes only. Gambling can be addictive and risky. Never bet money you cannot afford to lose.
-
 ## License
-MIT License - see LICENSE file for details 
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Disclaimer
+
+This software is for educational purposes only. Trading involves risk of monetary loss. Past performance is not indicative of future results. 
