@@ -1,0 +1,15 @@
+# Debug images
+debug/*
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tiff
+*.webp
+
+# Specific image patterns from our script
+debug_*
+flew_away_*
+crop_*
+
