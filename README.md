@@ -2,6 +2,10 @@
 NOTE: I "vibe-coded" through this project;
 Tldr: Aviator is extremely random and is a zero-sum game except for the fact that you are the one who will keep losing! Please don't even try it.
 
+### Caveats
+- The `main.py` script is designed such that Aviator runs on a secondary monitor with the comments section closed. You may need to adjust this.
+- You can uncomment the `cv2.imwrite()` lines to log screenshots for debugging. 
+
 ## Overview
 This project implements a machine learning-based prediction system for the Aviator game, a multiplier-based betting game where players need to cash out before the "plane" flies away. The project consists of two main components:
 - `main.py`: Real-time game state monitoring and data collection
